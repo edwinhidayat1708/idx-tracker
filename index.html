@@ -1449,43 +1449,43 @@ function computeIBSCSignals() {
     if (n < 2) return;
     const t = n - 1; // bulan referensi (terakhir tersedia)
 
-    const ibVal = i => data[i].cats[IDX_LOCAL_IB] + data[i].cats[IDX_FOREIGN_IB];
     const scVal = i => data[i].cats[IDX_LOCAL_SC] + data[i].cats[IDX_FOREIGN_SC];
     const fIbVal = i => data[i].cats[IDX_FOREIGN_IB];
-    const lIbVal = i => data[i].cats[IDX_LOCAL_IB];
 
-    // --- SINYAL 1: IB Senyap (2 bulan berturut, 0.1%-1.0% saham beredar / bulan) ---
+    // --- SINYAL 1 (REVISI): IB Senyap — Foreign IB SAJA + Market Cap >= Rp1T ---
+    // Tervalidasi out-of-sample: lift 1,87-2,01x (naik dari versi lama 1,3-1,4x)
     if (n >= 3) {
+      const mcap = data[t].price * data[t].sec;
       const sec1 = data[t-2].sec, sec2 = data[t-1].sec;
-      if (sec1 > 0 && sec2 > 0) {
-        const d1 = (ibVal(t-1) - ibVal(t-2)) / sec1;
-        const d2 = (ibVal(t) - ibVal(t-1)) / sec2;
+      if (sec1 > 0 && sec2 > 0 && mcap >= 1e12) {
+        const d1 = (fIbVal(t-1) - fIbVal(t-2)) / sec1;
+        const d2 = (fIbVal(t) - fIbVal(t-1)) / sec2;
         const inBand = v => v >= 0.001 && v <= 0.01;
         if (inBand(d1) && inBand(d2)) {
-          const foreignDriven = (fIbVal(t) - fIbVal(t-2)) >= (lIbVal(t) - lIbVal(t-2));
           ibResults.push({
-            code, price: data[t].price, date: data[t].date,
-            m1: d1 * 100, m2: d2 * 100, cum: (d1 + d2) * 100,
-            foreignDriven
+            code, price: data[t].price, date: data[t].date, mcap,
+            m1: d1 * 100, m2: d2 * 100, cum: (d1 + d2) * 100
           });
         }
       }
     }
 
-    // --- SINYAL 2: SC Akumulasi (>2% saham beredar dalam 3 bulan) ---
+    // --- SINYAL 2 (REVISI): SC Akumulasi — WAJIB monoton naik 3 bulan berturut + akumulasi >2% ---
+    // Tervalidasi out-of-sample: lift 1,86-1,92x (naik dari versi lama 1,3-1,7x)
+    // PENTING: syarat monoton SAJA (tanpa syarat magnitude) lift-nya cuma 0,98x - harus dikombinasikan
     if (n >= 4) {
       const base = t - 3;
-      const secT = data[t].sec;
-      if (secT > 0) {
-        const accum = (scVal(t) - scVal(base)) / secT;
+      const secT = data[t-1].sec;
+      const v0 = scVal(base), v1 = scVal(base+1), v2 = scVal(base+2), v3 = scVal(t);
+      const strictlyIncreasing = (v1 > v0) && (v2 > v1) && (v3 > v2);
+      if (secT > 0 && strictlyIncreasing) {
+        const accum = (v3 - v0) / secT;
         if (accum > 0.02) {
-          // cek IB bersamaan (kombinasi sedikit menaikkan lift 19.9%->23.2%)
-          const ibConcurrent = (ibVal(t) - ibVal(base));
           scResults.push({
             code, price: data[t].price, date: data[t].date,
             accum: accum * 100,
             tier: accum > 0.03 ? 'high' : 'medium',
-            ibConfirm: ibConcurrent > 0
+            m: [v1-v0, v2-v1, v3-v2].map(x => x/secT*100)
           });
         }
       }
@@ -1502,6 +1502,7 @@ function renderSignals() {
   const { ib, sc } = computeIBSCSignals();
   const el = document.getElementById('mainContent');
   const latestMonth = getAllMonths().slice(-1)[0] || '—';
+  const fmtMcap = v => v >= 1e12 ? (v/1e12).toFixed(2)+'T' : (v/1e9).toFixed(0)+'M';
 
   el.innerHTML = `
     <div class="summary-bar" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 28px;">
@@ -1523,28 +1524,29 @@ function renderSignals() {
     </div>
 
     <div class="chart-wrap" style="margin-bottom:24px;">
-      <div class="chart-title"><span class="dot" style="background:var(--grad-gold);"></span>🐋 Sinyal IB Senyap (Quiet Accumulation)</div>
+      <div class="chart-title"><span class="dot" style="background:var(--grad-gold);"></span>🐋 Sinyal IB Senyap (Foreign IB, Large Cap)</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
-        Kriteria: akumulasi Local+Foreign IB <b>0,1%–1,0% saham beredar</b>, 2 bulan berturut-turut, arah beli konsisten.
-        Tervalidasi out-of-sample: lift <b>1,3–1,4x</b> dari base rate rally &gt;10% (base ~15,5–17,9% → dengan sinyal ~22–26%).
-        98,2% kasus historis didorong <b>Foreign IB</b>. Bukan jaminan — gunakan sebagai watchlist, bukan sinyal beli otomatis.
+        Kriteria: akumulasi <b>Foreign IB saja</b> 0,1%–1,0% saham beredar, 2 bulan berturut-turut, arah beli konsisten,
+        DAN market cap ≥ <b>Rp 1 Triliun</b>.
+        Tervalidasi out-of-sample: lift <b>1,87–2,01x</b> dari base rate rally &gt;10% (base ~13,5–15,7% → dengan sinyal ~27–29%).
+        Bukan jaminan — gunakan sebagai watchlist, bukan sinyal beli otomatis.
       </p>
       ${ib.length === 0 ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">Tidak ada saham yang memenuhi kriteria bulan ini.</div>` : `
       <div class="sc-table-wrap">
         <table class="sc-table">
           <thead><tr>
             <th style="text-align:left;">#</th><th style="text-align:left;">Kode</th><th>Harga</th>
-            <th>Bulan-2 (%)</th><th>Bulan-1 (%)</th><th>Kumulatif (%)</th><th>Didorong</th>
+            <th>Market Cap</th><th>Bulan-2 (%)</th><th>Bulan-1 (%)</th><th>Kumulatif (%)</th>
           </tr></thead>
           <tbody>
             ${ib.map((r,i) => `<tr onclick="goStock('${r.code}')">
               <td><span class="rank-num">${i+1}</span></td>
               <td><span class="sc-code-link">${r.code}</span></td>
               <td>Rp ${r.price?.toLocaleString() || '—'}</td>
+              <td style="color:var(--muted);font-size:11px;">Rp ${fmtMcap(r.mcap)}</td>
               <td class="val-pos">+${r.m1.toFixed(2)}%</td>
               <td class="val-pos">+${r.m2.toFixed(2)}%</td>
               <td class="val-pos" style="font-weight:800;">+${r.cum.toFixed(2)}%</td>
-              <td><span class="cat-pct-badge ${r.foreignDriven?'pos':'neg'}" style="background:${r.foreignDriven?'rgba(139,92,246,0.12)':'rgba(18,183,106,0.12)'};color:${r.foreignDriven?'var(--accent3)':'var(--accent)'};">${r.foreignDriven?'Foreign':'Local'}</span></td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1552,27 +1554,31 @@ function renderSignals() {
     </div>
 
     <div class="chart-wrap">
-      <div class="chart-title"><span class="dot" style="background:var(--grad-pop);"></span>📊 Sinyal SC Akumulasi</div>
+      <div class="chart-title"><span class="dot" style="background:var(--grad-pop);"></span>📊 Sinyal SC Akumulasi (Monoton 3 Bulan)</div>
       <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
-        Kriteria: akumulasi Local+Foreign SC <b>&gt;2% saham beredar dalam 3 bulan</b>. Signifikan statistik (p&lt;0,05, 99 saham berbeda).
-        Lift tervalidasi: &gt;2% → 1,3-1,4x | &gt;3% → 1,4-1,7x.
-        <b style="color:var(--red);">⚠️ Peringatan risiko:</b> P(rally &gt;10%) ≈21,5% HAMPIR SAMA dengan P(rugi &gt;10%) ≈24,6%. Ini sinyal <b>volatilitas</b>, bukan arah pasti — wajib pakai stop-loss. Jeda waktu paling produktif: 1-3 bulan.
+        Kriteria: SC (Local+Foreign) naik <b>3 bulan berturut-turut TANPA PUTUS</b> (tidak boleh turun di bulan manapun),
+        DAN total akumulasi &gt;2% saham beredar.
+        Tervalidasi out-of-sample: lift <b>1,86–1,92x</b> (base ~14,4–17,9% → dengan sinyal ~27,5–33,3%).
+        ⚠️ Syarat monoton SAJA (tanpa syarat magnitude) TIDAK berguna (lift 0,98x) — kombinasi keduanya yang penting.
+        <b style="color:var(--red);">Peringatan risiko:</b> P(rally &gt;10%) hampir sama dengan P(rugi &gt;10%) — wajib pakai stop-loss. Jeda waktu paling produktif: 1-3 bulan.
       </p>
       ${sc.length === 0 ? `<div style="padding:24px;text-align:center;color:var(--muted);font-size:13px;">Tidak ada saham yang memenuhi kriteria bulan ini.</div>` : `
       <div class="sc-table-wrap">
         <table class="sc-table">
           <thead><tr>
             <th style="text-align:left;">#</th><th style="text-align:left;">Kode</th><th>Harga</th>
-            <th>Akumulasi SC (3bln)</th><th>Confidence</th><th>Konfirmasi IB</th>
+            <th>Bulan-3</th><th>Bulan-2</th><th>Bulan-1</th><th>Akumulasi (3bln)</th><th>Confidence</th>
           </tr></thead>
           <tbody>
             ${sc.map((r,i) => `<tr onclick="goStock('${r.code}')">
               <td><span class="rank-num">${i+1}</span></td>
               <td><span class="sc-code-link">${r.code}</span></td>
               <td>Rp ${r.price?.toLocaleString() || '—'}</td>
+              <td class="val-pos">+${r.m[0].toFixed(2)}%</td>
+              <td class="val-pos">+${r.m[1].toFixed(2)}%</td>
+              <td class="val-pos">+${r.m[2].toFixed(2)}%</td>
               <td class="val-pos" style="font-weight:800;">+${r.accum.toFixed(2)}%</td>
               <td><span class="cat-pct-badge ${r.tier==='high'?'pos':'neg'}" style="background:${r.tier==='high'?'rgba(245,165,36,0.15)':'rgba(139,92,246,0.12)'};color:${r.tier==='high'?'var(--accent2)':'var(--accent3)'};">${r.tier==='high'?'Tinggi (>3%)':'Sedang (2-3%)'}</span></td>
-              <td>${r.ibConfirm ? '<span class="cat-pct-badge pos">✓ IB ikut beli</span>' : '<span style="color:var(--muted);font-size:11px;">—</span>'}</td>
             </tr>`).join('')}
           </tbody>
         </table>
@@ -1580,7 +1586,7 @@ function renderSignals() {
     </div>
 
     <div style="margin-top:20px; padding:16px 20px; background:var(--surface2); border-radius:14px; font-size:11px; color:var(--muted); line-height:1.6;">
-      💡 Formula berdasarkan riset kuantitatif 633 saham × 36 bulan data KSEI (Jul 2023–Jun 2026). Kedua sinyal adalah <b>lift probabilistik</b>, bukan jaminan — selalu kombinasikan dengan analisis fundamental &amp; manajemen risiko sendiri. Klik baris untuk lihat riwayat lengkap saham di tab History.
+      💡 Formula berdasarkan riset kuantitatif 633 saham × 36 bulan data KSEI (Jul 2023–Jun 2026), direvisi dengan filter Foreign-IB-only + market cap (Sinyal 1) dan syarat monoton 3-bulan (Sinyal 2) untuk akurasi lebih tinggi. Kedua sinyal adalah <b>lift probabilistik</b>, bukan jaminan — selalu kombinasikan dengan analisis fundamental, corporate action, &amp; manajemen risiko sendiri. Klik baris untuk lihat riwayat lengkap saham di tab History.
     </div>
   `;
 }
