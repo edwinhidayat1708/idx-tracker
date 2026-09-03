@@ -1,11 +1,20 @@
 <!DOCTYPE html>
 <!--
   IDX Ownership Tracker
-  Version   : v1.5.0
+  Version   : v1.6.0
   Data per  : Agustus 2026 (1.011 saham) + Pemegang >1% Mar-Agu 2026 (962 saham)
   Build date: 2026-09-02
 
   Changelog:
+  v1.6.0 (2026-09-02) - Fitur baru: Riwayat Validasi Sinyal otomatis (localStorage)
+                       - Tiap buka tab Sinyal dgn data bulan baru, snapshot rekomendasi
+                         tersimpan otomatis di browser; realisasi bulan berikutnya
+                         dihitung & ditampilkan otomatis, dibandingkan benchmark pasar
+                         (median & mean)
+                       - Di-seed dengan data Jul->Agu 2026 (hasil backtest manual):
+                         SC Akumulasi +2,46% vs pasar median +2,04% (sedikit unggul)
+                         IB Senyap +15,65% vs pasar median +2,04% (perlu >=3-6 bln lagi
+                         validasi sebelum dipercaya penuh, baru 1 data point)
   v1.5.0 (2026-09-02) - Fitur baru: tab "👥 Pemegang Utama" — data resmi KSEI Kepemilikan >1%
                          (Mar-Agu 2026), nama investor dinormalisasi (fix "PT." vs "PT" dll)
                        - Tabel tren per-investor per-bulan, badge BARU/NAIK/TURUN otomatis
@@ -699,7 +708,7 @@
   <div class="header-badge">
     <strong id="totalStocks">0</strong> stocks · <span id="dateRange">—</span>
   </div>
-  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.5.0</div>
+  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.6.0</div>
 </header>
 
 <div class="app">
@@ -1541,12 +1550,120 @@ function computeIBSCSignals() {
   return { ib: ibResults, sc: scResults };
 }
 
+// ============ RIWAYAT VALIDASI SINYAL (localStorage, auto-track tiap bulan) ============
+const SIGNAL_HISTORY_KEY = 'idx_tracker_signal_history_v1';
+const SEED_HISTORY = {
+  "2026-07": {
+    savedAt: "2026-09-02T00:00:00.000Z",
+    ib: [
+      {code:"CUAN",price:665},{code:"ISAT",price:1900},{code:"GOTO",price:50},{code:"PGAS",price:1500},
+      {code:"PNBN",price:895},{code:"AVIA",price:324},{code:"BBTN",price:1215},{code:"SSMS",price:1000},
+      {code:"RMKE",price:418},{code:"HRTA",price:1855},{code:"DOOH",price:248},{code:"UCID",price:414},
+      {code:"KETR",price:555},{code:"JGLE",price:64},{code:"KBLI",price:324}
+    ],
+    sc: [
+      {code:"HYGN",price:171,accum:5.56},{code:"MMIX",price:735,accum:4.71},
+      {code:"RMKE",price:418,accum:3.58},{code:"DEWA",price:460,accum:2.36}
+    ]
+  }
+};
+
+function loadSignalHistory() {
+  try {
+    const raw = localStorage.getItem(SIGNAL_HISTORY_KEY);
+    if (raw) return JSON.parse(raw);
+    // belum ada riwayat sama sekali -> isi dengan data seed (backtest awal)
+    localStorage.setItem(SIGNAL_HISTORY_KEY, JSON.stringify(SEED_HISTORY));
+    return SEED_HISTORY;
+  } catch (e) {
+    console.warn('localStorage tidak tersedia:', e);
+    return SEED_HISTORY;
+  }
+}
+
+function saveSignalSnapshot(month, ib, sc) {
+  try {
+    const hist = loadSignalHistory();
+    if (hist[month]) return; // sudah pernah disimpan bulan ini, jangan timpa
+    hist[month] = {
+      savedAt: new Date().toISOString(),
+      ib: ib.map(r => ({ code: r.code, price: r.price })),
+      sc: sc.map(r => ({ code: r.code, price: r.price, accum: r.accum }))
+    };
+    localStorage.setItem(SIGNAL_HISTORY_KEY, JSON.stringify(hist));
+  } catch (e) {
+    console.warn('Gagal simpan snapshot:', e);
+  }
+}
+
+function nextMonthStr(ym) {
+  const [y, m] = ym.split('-').map(Number);
+  const nm = m === 12 ? 1 : m + 1;
+  const ny = m === 12 ? y + 1 : y;
+  return `${ny}-${String(nm).padStart(2,'0')}`;
+}
+
+function getPriceAt(code, ym) {
+  const recs = RAW[code];
+  if (!recs) return null;
+  const rec = recs.find(r => r.date === ym);
+  return rec ? rec.price : null;
+}
+
+function computeMarketBenchmark(ymFrom, ymTo) {
+  const rets = [];
+  Object.keys(RAW).forEach(code => {
+    const p1 = getPriceAt(code, ymFrom), p2 = getPriceAt(code, ymTo);
+    if (p1 && p2 && p1 > 0) rets.push((p2/p1 - 1) * 100);
+  });
+  if (rets.length === 0) return { mean: null, median: null, n: 0 };
+  const mean = rets.reduce((a,b)=>a+b,0) / rets.length;
+  const sorted = [...rets].sort((a,b)=>a-b);
+  const median = sorted.length % 2 === 0
+    ? (sorted[sorted.length/2-1] + sorted[sorted.length/2]) / 2
+    : sorted[Math.floor(sorted.length/2)];
+  return { mean, median, n: rets.length };
+}
+
+function buildSignalHistoryReport() {
+  const hist = loadSignalHistory();
+  const months = Object.keys(hist).sort();
+  const report = [];
+  months.forEach(m => {
+    const nm = nextMonthStr(m);
+    const entry = hist[m];
+    const hasRealization = Object.keys(RAW).some(c => getPriceAt(c, nm) !== null);
+    if (!hasRealization) return; // bulan berikutnya belum ada datanya
+
+    const calcPortfolio = (list) => {
+      const rows = list.map(r => {
+        const pNow = getPriceAt(r.code, nm);
+        const ret = (pNow && r.price) ? (pNow/r.price - 1) * 100 : null;
+        return { code: r.code, entry: r.price, now: pNow, ret };
+      });
+      const validRets = rows.filter(x => x.ret !== null).map(x => x.ret);
+      const avg = validRets.length ? validRets.reduce((a,b)=>a+b,0)/validRets.length : null;
+      return { rows, avg };
+    };
+
+    const ibResult = calcPortfolio(entry.ib);
+    const scResult = calcPortfolio(entry.sc);
+    const bench = computeMarketBenchmark(m, nm);
+    report.push({ month: m, nextMonth: nm, ib: ibResult, sc: scResult, bench });
+  });
+  return report.sort((a,b) => b.month.localeCompare(a.month)); // terbaru dulu
+}
+
 function renderSignals() {
   destroyCharts();
   const { ib, sc } = computeIBSCSignals();
   const el = document.getElementById('mainContent');
   const latestMonth = getAllMonths().slice(-1)[0] || '—';
   const fmtMcap = v => v >= 1e12 ? (v/1e12).toFixed(2)+'T' : (v/1e9).toFixed(0)+'M';
+
+  // auto-simpan snapshot sinyal bulan ini (sekali per bulan, tidak menimpa)
+  if (latestMonth !== '—') saveSignalSnapshot(latestMonth, ib, sc);
+  const historyReport = buildSignalHistoryReport();
 
   el.innerHTML = `
     <div class="summary-bar" style="grid-template-columns: repeat(3, 1fr); margin-bottom: 28px;">
@@ -1632,6 +1749,45 @@ function renderSignals() {
     <div style="margin-top:20px; padding:16px 20px; background:var(--surface2); border-radius:14px; font-size:11px; color:var(--muted); line-height:1.6;">
       💡 Formula berdasarkan riset kuantitatif 633 saham × 36 bulan data KSEI (Jul 2023–Jun 2026), direvisi dengan filter Foreign-IB-only + market cap (Sinyal 1) dan syarat monoton 3-bulan (Sinyal 2) untuk akurasi lebih tinggi. Kedua sinyal adalah <b>lift probabilistik</b>, bukan jaminan — selalu kombinasikan dengan analisis fundamental, corporate action, &amp; manajemen risiko sendiri. Klik baris untuk lihat riwayat lengkap saham di tab History.
     </div>
+
+    ${historyReport.length > 0 ? `
+    <div class="chart-wrap" style="margin-top:24px;">
+      <div class="chart-title"><span class="dot" style="background:var(--grad-cuan);"></span>📊 Riwayat Validasi Sinyal (Otomatis, Tersimpan di Browser Ini)</div>
+      <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
+        Setiap kali tab ini dibuka dengan data bulan baru, sistem otomatis menyimpan daftar rekomendasi saat itu. Begitu bulan berikutnya tersedia, realisasinya dihitung otomatis di sini — supaya bisa dipantau track record-nya dari waktu ke waktu, apa adanya (tidak diedit/dihapus).
+      </p>
+      ${historyReport.map(r => `
+        <div style="margin-bottom:20px; padding:16px; background:var(--surface2); border-radius:12px;">
+          <div style="font-weight:800; font-size:13px; margin-bottom:10px; font-family:'Syne',sans-serif;">
+            Rekomendasi ${r.month} → Realisasi ${r.nextMonth}
+          </div>
+          <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:10px; font-size:12px;">
+            <span>SC Akumulasi: <b style="color:${r.sc.avg>0?'var(--green)':r.sc.avg<0?'var(--red)':'var(--muted)'}">${r.sc.avg!==null ? (r.sc.avg>=0?'+':'')+r.sc.avg.toFixed(2)+'%' : '—'}</b> (${r.sc.rows.length} saham)</span>
+            <span>IB Senyap: <b style="color:${r.ib.avg>0?'var(--green)':r.ib.avg<0?'var(--red)':'var(--muted)'}">${r.ib.avg!==null ? (r.ib.avg>=0?'+':'')+r.ib.avg.toFixed(2)+'%' : '—'}</b> (${r.ib.rows.length} saham)</span>
+            <span style="color:var(--muted);">Pasar (median): <b>${r.bench.median!==null ? (r.bench.median>=0?'+':'')+r.bench.median.toFixed(2)+'%' : '—'}</b></span>
+            <span style="color:var(--muted);">Pasar (mean): <b>${r.bench.mean!==null ? (r.bench.mean>=0?'+':'')+r.bench.mean.toFixed(2)+'%' : '—'}</b></span>
+          </div>
+          <details style="font-size:11px;">
+            <summary style="cursor:pointer; color:var(--accent); font-weight:600;">Lihat detail per saham</summary>
+            <div style="margin-top:8px; display:grid; grid-template-columns: 1fr 1fr; gap:16px;">
+              <div>
+                <div style="color:var(--muted); font-weight:700; margin-bottom:4px;">SC Akumulasi</div>
+                ${r.sc.rows.map(x => `<div>${x.code}: ${x.ret!==null ? (x.ret>=0?'+':'')+x.ret.toFixed(2)+'%' : 'data blm ada'}</div>`).join('')}
+              </div>
+              <div>
+                <div style="color:var(--muted); font-weight:700; margin-bottom:4px;">IB Senyap</div>
+                ${r.ib.rows.map(x => `<div>${x.code}: ${x.ret!==null ? (x.ret>=0?'+':'')+x.ret.toFixed(2)+'%' : 'data blm ada'}</div>`).join('')}
+              </div>
+            </div>
+          </details>
+        </div>
+      `).join('')}
+    </div>
+    ` : `
+    <div style="margin-top:20px; padding:16px 20px; background:var(--surface2); border-radius:14px; font-size:11px; color:var(--muted); text-align:center;">
+      📌 Snapshot bulan ${latestMonth} baru saja disimpan otomatis. Riwayat validasi akan muncul di sini begitu data bulan berikutnya sudah diupdate.
+    </div>
+    `}
   `;
 }
 
