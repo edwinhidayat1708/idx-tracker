@@ -1,11 +1,17 @@
 <!DOCTYPE html>
 <!--
   IDX Ownership Tracker
-  Version   : v1.6.0
+  Version   : v1.6.1
   Data per  : Agustus 2026 (1.011 saham) + Pemegang >1% Mar-Agu 2026 (962 saham)
   Build date: 2026-09-02
 
   Changelog:
+  v1.6.1 (2026-09-02) - Lengkapi Riwayat Validasi Sinyal: tambah seed Mei->Jun & Jun->Jul 2026
+                         (sebelumnya cuma Jul->Agu). Sekarang 3 bulan histori penuh:
+                         Mei->Jun: SC +16,38% vs median -7,28%  | IB -8,23% vs median -7,28%
+                         Jun->Jul: SC +34,57% vs median +6,76%  | IB +14,75% vs median +6,76%
+                         Jul->Agu: SC +2,46%  vs median +2,04%  | IB +15,65% vs median +2,04%
+                         SC konsisten unggul 3/3 bulan; IB unggul 2/3 bulan.
   v1.6.0 (2026-09-02) - Fitur baru: Riwayat Validasi Sinyal otomatis (localStorage)
                        - Tiap buka tab Sinyal dgn data bulan baru, snapshot rekomendasi
                          tersimpan otomatis di browser; realisasi bulan berikutnya
@@ -708,7 +714,7 @@
   <div class="header-badge">
     <strong id="totalStocks">0</strong> stocks · <span id="dateRange">—</span>
   </div>
-  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.6.0</div>
+  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.6.1</div>
 </header>
 
 <div class="app">
@@ -1553,6 +1559,7 @@ function computeIBSCSignals() {
 // ============ RIWAYAT VALIDASI SINYAL (localStorage, auto-track tiap bulan) ============
 const SIGNAL_HISTORY_KEY = 'idx_tracker_signal_history_v1';
 const SEED_HISTORY = {
+"2026-05":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"AKRA","price":1235},{"code":"AMRT","price":1150},{"code":"FORE","price":705},{"code":"GGRM","price":17000},{"code":"INDY","price":2280},{"code":"INTP","price":4900},{"code":"KBLI","price":322},{"code":"MAIN","price":830},{"code":"MAPI","price":1495},{"code":"SSIA","price":1675},{"code":"TAPG","price":1520},{"code":"TLKM","price":3030}],"sc":[{"code":"ASRI","price":116,"accum":3.46},{"code":"DSSA","price":492,"accum":4.46},{"code":"MMIX","price":422,"accum":5.88},{"code":"NSSS","price":462,"accum":19.07},{"code":"PACK","price":308,"accum":2.5}]},"2026-06":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"BBCA","price":5550},{"code":"BIRD","price":1485},{"code":"CTRA","price":555},{"code":"CUAN","price":530},{"code":"DOID","price":200},{"code":"GGRM","price":16250},{"code":"GOTO","price":50},{"code":"INET","price":181},{"code":"INTP","price":4160},{"code":"IRSX","price":264},{"code":"KBLI","price":324},{"code":"MEDC","price":1025},{"code":"MIDI","price":258},{"code":"MTDL","price":505},{"code":"NCKL","price":780},{"code":"PNLF","price":216},{"code":"PWON","price":240},{"code":"SSMS","price":725},{"code":"TKIM","price":5400}],"sc":[{"code":"BRMS","price":474,"accum":4.94},{"code":"DEWA","price":284,"accum":2.87},{"code":"DSSA","price":795,"accum":4.61},{"code":"MMIX","price":545,"accum":4.72},{"code":"NSSS","price":580,"accum":36.85},{"code":"PACK","price":226,"accum":2.49},{"code":"SMRA","price":272,"accum":3.15}]},
   "2026-07": {
     savedAt: "2026-09-02T00:00:00.000Z",
     ib: [
@@ -1566,6 +1573,7 @@ const SEED_HISTORY = {
       {code:"RMKE",price:418,accum:3.58},{code:"DEWA",price:460,accum:2.36}
     ]
   }
+
 };
 
 function loadSignalHistory() {
