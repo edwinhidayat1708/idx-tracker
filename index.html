@@ -1,11 +1,16 @@
 <!DOCTYPE html>
 <!--
   IDX Ownership Tracker
-  Version   : v1.6.1
+  Version   : v1.7.0
   Data per  : Agustus 2026 (1.011 saham) + Pemegang >1% Mar-Agu 2026 (962 saham)
   Build date: 2026-09-02
 
   Changelog:
+  v1.7.0 (2026-09-02) - Tambah scatter chart di Riwayat Validasi Sinyal: visualisasi
+                         "% Akumulasi vs Return Realisasi" untuk SC & IB, pooled dari
+                         semua bulan tersimpan. Update otomatis tiap kali data bertambah.
+                         Catatan: korelasi SC (r=+0.62) banyak didorong NSSS - hati-hati
+                         generalisasi. IB tidak menunjukkan pola magnitude->return (r=-0.15).
   v1.6.1 (2026-09-02) - Lengkapi Riwayat Validasi Sinyal: tambah seed Mei->Jun & Jun->Jul 2026
                          (sebelumnya cuma Jul->Agu). Sekarang 3 bulan histori penuh:
                          Mei->Jun: SC +16,38% vs median -7,28%  | IB -8,23% vs median -7,28%
@@ -714,7 +719,7 @@
   <div class="header-badge">
     <strong id="totalStocks">0</strong> stocks · <span id="dateRange">—</span>
   </div>
-  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.6.1</div>
+  <div style="font-size:10px;color:var(--muted);opacity:0.6;margin-left:12px;font-family:'DM Mono',monospace;">v1.7.0</div>
 </header>
 
 <div class="app">
@@ -1559,14 +1564,14 @@ function computeIBSCSignals() {
 // ============ RIWAYAT VALIDASI SINYAL (localStorage, auto-track tiap bulan) ============
 const SIGNAL_HISTORY_KEY = 'idx_tracker_signal_history_v1';
 const SEED_HISTORY = {
-"2026-05":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"AKRA","price":1235},{"code":"AMRT","price":1150},{"code":"FORE","price":705},{"code":"GGRM","price":17000},{"code":"INDY","price":2280},{"code":"INTP","price":4900},{"code":"KBLI","price":322},{"code":"MAIN","price":830},{"code":"MAPI","price":1495},{"code":"SSIA","price":1675},{"code":"TAPG","price":1520},{"code":"TLKM","price":3030}],"sc":[{"code":"ASRI","price":116,"accum":3.46},{"code":"DSSA","price":492,"accum":4.46},{"code":"MMIX","price":422,"accum":5.88},{"code":"NSSS","price":462,"accum":19.07},{"code":"PACK","price":308,"accum":2.5}]},"2026-06":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"BBCA","price":5550},{"code":"BIRD","price":1485},{"code":"CTRA","price":555},{"code":"CUAN","price":530},{"code":"DOID","price":200},{"code":"GGRM","price":16250},{"code":"GOTO","price":50},{"code":"INET","price":181},{"code":"INTP","price":4160},{"code":"IRSX","price":264},{"code":"KBLI","price":324},{"code":"MEDC","price":1025},{"code":"MIDI","price":258},{"code":"MTDL","price":505},{"code":"NCKL","price":780},{"code":"PNLF","price":216},{"code":"PWON","price":240},{"code":"SSMS","price":725},{"code":"TKIM","price":5400}],"sc":[{"code":"BRMS","price":474,"accum":4.94},{"code":"DEWA","price":284,"accum":2.87},{"code":"DSSA","price":795,"accum":4.61},{"code":"MMIX","price":545,"accum":4.72},{"code":"NSSS","price":580,"accum":36.85},{"code":"PACK","price":226,"accum":2.49},{"code":"SMRA","price":272,"accum":3.15}]},
+"2026-05":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"AKRA","price":1235,"cum":0.2699},{"code":"AMRT","price":1150,"cum":0.4431},{"code":"FORE","price":705,"cum":0.5611},{"code":"GGRM","price":17000,"cum":0.2573},{"code":"INDY","price":2280,"cum":1.22},{"code":"INTP","price":4900,"cum":0.3592},{"code":"KBLI","price":322,"cum":0.2756},{"code":"MAIN","price":830,"cum":0.5787},{"code":"MAPI","price":1495,"cum":0.6898},{"code":"SSIA","price":1675,"cum":0.9279},{"code":"TAPG","price":1520,"cum":0.7355},{"code":"TLKM","price":3030,"cum":0.5741}],"sc":[{"code":"ASRI","price":116,"accum":3.46},{"code":"DSSA","price":492,"accum":4.46},{"code":"MMIX","price":422,"accum":5.88},{"code":"NSSS","price":462,"accum":19.07},{"code":"PACK","price":308,"accum":2.5}]},"2026-06":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"BBCA","price":5550,"cum":0.4084},{"code":"BIRD","price":1485,"cum":0.6485},{"code":"CTRA","price":555,"cum":0.5484},{"code":"CUAN","price":530,"cum":0.9423},{"code":"DOID","price":200,"cum":0.3488},{"code":"GGRM","price":16250,"cum":0.2573},{"code":"GOTO","price":50,"cum":0.5152},{"code":"INET","price":181,"cum":0.3427},{"code":"INTP","price":4160,"cum":0.3592},{"code":"IRSX","price":264,"cum":0.2686},{"code":"KBLI","price":324,"cum":0.2756},{"code":"MEDC","price":1025,"cum":0.3023},{"code":"MIDI","price":258,"cum":0.3449},{"code":"MTDL","price":505,"cum":0.3919},{"code":"NCKL","price":780,"cum":0.3693},{"code":"PNLF","price":216,"cum":0.3143},{"code":"PWON","price":240,"cum":0.7842},{"code":"SSMS","price":725,"cum":0.6515},{"code":"TKIM","price":5400,"cum":0.9434}],"sc":[{"code":"BRMS","price":474,"accum":4.94},{"code":"DEWA","price":284,"accum":2.87},{"code":"DSSA","price":795,"accum":4.61},{"code":"MMIX","price":545,"accum":4.72},{"code":"NSSS","price":580,"accum":36.85},{"code":"PACK","price":226,"accum":2.49},{"code":"SMRA","price":272,"accum":3.15}]},
   "2026-07": {
     savedAt: "2026-09-02T00:00:00.000Z",
     ib: [
-      {code:"CUAN",price:665},{code:"ISAT",price:1900},{code:"GOTO",price:50},{code:"PGAS",price:1500},
-      {code:"PNBN",price:895},{code:"AVIA",price:324},{code:"BBTN",price:1215},{code:"SSMS",price:1000},
-      {code:"RMKE",price:418},{code:"HRTA",price:1855},{code:"DOOH",price:248},{code:"UCID",price:414},
-      {code:"KETR",price:555},{code:"JGLE",price:64},{code:"KBLI",price:324}
+      {code:"CUAN",price:665,cum:0.7506},{code:"ISAT",price:1900,cum:0.4148},{code:"GOTO",price:50,cum:0.769},{code:"PGAS",price:1500,cum:0.7169},
+      {code:"PNBN",price:895,cum:0.2492},{code:"AVIA",price:324,cum:0.6356},{code:"BBTN",price:1215,cum:0.4641},{code:"SSMS",price:1000,cum:0.7239},
+      {code:"RMKE",price:418,cum:0.4631},{code:"HRTA",price:1855,cum:0.4532},{code:"DOOH",price:248,cum:0.4192},{code:"UCID",price:414,cum:0.2803},
+      {code:"KETR",price:555,cum:0.7603},{code:"JGLE",price:64,cum:0.308},{code:"KBLI",price:324,cum:0.2606}
     ],
     sc: [
       {code:"HYGN",price:171,accum:5.56},{code:"MMIX",price:735,accum:4.71},
@@ -1595,7 +1600,7 @@ function saveSignalSnapshot(month, ib, sc) {
     if (hist[month]) return; // sudah pernah disimpan bulan ini, jangan timpa
     hist[month] = {
       savedAt: new Date().toISOString(),
-      ib: ib.map(r => ({ code: r.code, price: r.price })),
+      ib: ib.map(r => ({ code: r.code, price: r.price, cum: r.cum })),
       sc: sc.map(r => ({ code: r.code, price: r.price, accum: r.accum }))
     };
     localStorage.setItem(SIGNAL_HISTORY_KEY, JSON.stringify(hist));
@@ -1643,19 +1648,19 @@ function buildSignalHistoryReport() {
     const hasRealization = Object.keys(RAW).some(c => getPriceAt(c, nm) !== null);
     if (!hasRealization) return; // bulan berikutnya belum ada datanya
 
-    const calcPortfolio = (list) => {
+    const calcPortfolio = (list, magKey) => {
       const rows = list.map(r => {
         const pNow = getPriceAt(r.code, nm);
         const ret = (pNow && r.price) ? (pNow/r.price - 1) * 100 : null;
-        return { code: r.code, entry: r.price, now: pNow, ret };
+        return { code: r.code, entry: r.price, now: pNow, ret, mag: r[magKey] };
       });
       const validRets = rows.filter(x => x.ret !== null).map(x => x.ret);
       const avg = validRets.length ? validRets.reduce((a,b)=>a+b,0)/validRets.length : null;
       return { rows, avg };
     };
 
-    const ibResult = calcPortfolio(entry.ib);
-    const scResult = calcPortfolio(entry.sc);
+    const ibResult = calcPortfolio(entry.ib, 'cum');
+    const scResult = calcPortfolio(entry.sc, 'accum');
     const bench = computeMarketBenchmark(m, nm);
     report.push({ month: m, nextMonth: nm, ib: ibResult, sc: scResult, bench });
   });
@@ -1764,6 +1769,18 @@ function renderSignals() {
       <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
         Setiap kali tab ini dibuka dengan data bulan baru, sistem otomatis menyimpan daftar rekomendasi saat itu. Begitu bulan berikutnya tersedia, realisasinya dihitung otomatis di sini — supaya bisa dipantau track record-nya dari waktu ke waktu, apa adanya (tidak diedit/dihapus).
       </p>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:20px;">
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); margin-bottom:8px;">📊 SC: % Akumulasi vs Return Realisasi</div>
+          <canvas id="scatterSC" height="180"></canvas>
+        </div>
+        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;">
+          <div style="font-size:11px; font-weight:700; color:var(--muted); margin-bottom:8px;">🐋 IB: % Magnitude vs Return Realisasi</div>
+          <canvas id="scatterIB" height="180"></canvas>
+        </div>
+      </div>
+
       ${historyReport.map(r => `
         <div style="margin-bottom:20px; padding:16px; background:var(--surface2); border-radius:12px;">
           <div style="font-weight:800; font-size:13px; margin-bottom:10px; font-family:'Syne',sans-serif;">
@@ -1797,6 +1814,43 @@ function renderSignals() {
     </div>
     `}
   `;
+
+  // Scatter chart: pool semua data historis (SC & IB) untuk lihat pola magnitude vs return
+  if (historyReport.length > 0) {
+    const scPoints = [];
+    const ibPoints = [];
+    historyReport.forEach(r => {
+      r.sc.rows.forEach(x => { if (x.ret !== null && x.mag != null) scPoints.push({ x: x.mag, y: x.ret, label: x.code }); });
+      r.ib.rows.forEach(x => { if (x.ret !== null && x.mag != null) ibPoints.push({ x: x.mag, y: x.ret, label: x.code }); });
+    });
+
+    const scatterOptions = (xLabel) => ({
+      responsive: true, maintainAspectRatio: true,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: ctx => `${ctx.raw.label}: ${xLabel}=${ctx.raw.x.toFixed(2)}%, Return=${ctx.raw.y.toFixed(1)}%` } }
+      },
+      scales: {
+        x: { title: { display: true, text: xLabel + ' (%)', color: '#5F7A6A', font: { size: 10 } }, grid: { color: '#E3F3E8' }, ticks: { color: '#5F7A6A', font: { size: 10 } } },
+        y: { title: { display: true, text: 'Return Realisasi (%)', color: '#5F7A6A', font: { size: 10 } }, grid: { color: '#E3F3E8' }, ticks: { color: '#5F7A6A', font: { size: 10 } } }
+      }
+    });
+
+    if (scPoints.length > 0) {
+      charts.scatterSC = new Chart(document.getElementById('scatterSC'), {
+        type: 'scatter',
+        data: { datasets: [{ data: scPoints, backgroundColor: 'rgba(139,92,246,0.7)', pointRadius: 5, pointHoverRadius: 7 }] },
+        options: scatterOptions('Akumulasi SC')
+      });
+    }
+    if (ibPoints.length > 0) {
+      charts.scatterIB = new Chart(document.getElementById('scatterIB'), {
+        type: 'scatter',
+        data: { datasets: [{ data: ibPoints, backgroundColor: 'rgba(245,165,36,0.7)', pointRadius: 5, pointHoverRadius: 7 }] },
+        options: scatterOptions('Magnitude IB')
+      });
+    }
+  }
 }
 
 // ============ PEMEGANG UTAMA (>1%) — data KSEI bulanan Mar-Agu 2026 ============
