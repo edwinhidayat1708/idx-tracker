@@ -3,20 +3,21 @@
   IDX Ownership Tracker
   Version   : v1.7.0
   Data per  : Agustus 2026 (1.011 saham) + Pemegang >1% Mar-Agu 2026 (962 saham)
-  Build date: 2026-09-02
+  Build date: 2026-09-20
 
   Changelog:
-  v1.7.0 (2026-09-02) - Tambah scatter chart di Riwayat Validasi Sinyal: visualisasi
-                         "% Akumulasi vs Return Realisasi" untuk SC & IB, pooled dari
-                         semua bulan tersimpan. Update otomatis tiap kali data bertambah.
-                         Catatan: korelasi SC (r=+0.62) banyak didorong NSSS - hati-hati
-                         generalisasi. IB tidak menunjukkan pola magnitude->return (r=-0.15).
-  v1.6.1 (2026-09-02) - Lengkapi Riwayat Validasi Sinyal: tambah seed Mei->Jun & Jun->Jul 2026
-                         (sebelumnya cuma Jul->Agu). Sekarang 3 bulan histori penuh:
-                         Mei->Jun: SC +16,38% vs median -7,28%  | IB -8,23% vs median -7,28%
-                         Jun->Jul: SC +34,57% vs median +6,76%  | IB +14,75% vs median +6,76%
-                         Jul->Agu: SC +2,46%  vs median +2,04%  | IB +15,65% vs median +2,04%
-                         SC konsisten unggul 3/3 bulan; IB unggul 2/3 bulan.
+  v1.7.0 (2026-09-20) - Fitur baru: tab "🚪 Backdoor Radar" — screener otomatis untuk
+                         deteksi potensi backdoor listing / reverse merger di seluruh
+                         universe saham dengan data Pemegang >1% (962 saham)
+                       - Sistem skor: entitas baru >1% (Corporate/PE/Individual, bobot
+                         lebih besar jika >=3%), lonjakan saham beredar >20% MoM,
+                         perubahan kategori kepemilikan >1pp, pemegang lama turun
+                         konsisten >=3pp, dan penyesuaian market cap kecil
+                       - Divalidasi manual pada kasus SINI (skor 6, confirmed), MORA
+                         (skor 5, confirmed reverse merger), UNSP (skor 6, ternyata
+                         debt-to-equity restructuring bukan backdoor - false positive
+                         yang perlu dicek manual via berita)
+                       - Klik baris kandidat untuk lihat breakdown skor lengkap
   v1.6.0 (2026-09-02) - Fitur baru: Riwayat Validasi Sinyal otomatis (localStorage)
                        - Tiap buka tab Sinyal dgn data bulan baru, snapshot rekomendasi
                          tersimpan otomatis di browser; realisasi bulan berikutnya
@@ -737,6 +738,7 @@
       <button class="tab" id="tabHolders" onclick="switchTab('holders')">👥 Pemegang Utama</button>
       <button class="tab" id="tabScreener" onclick="switchTab('screener')">🔍 Screener</button>
       <button class="tab" id="tabSignal" onclick="switchTab('signal')">🎯 Sinyal</button>
+      <button class="tab" id="tabBackdoor" onclick="switchTab('backdoor')">🚪 Backdoor Radar</button>
     </div>
     <div class="view-mode-group">
       <button class="view-btn active" id="viewVolume" onclick="switchView('volume')">Volume</button>
@@ -854,11 +856,13 @@ function switchTab(tab) {
   document.getElementById('tabHolders').classList.toggle('active', tab==='holders');
   document.getElementById('tabScreener').classList.toggle('active', tab==='screener');
   document.getElementById('tabSignal').classList.toggle('active', tab==='signal');
+  document.getElementById('tabBackdoor').classList.toggle('active', tab==='backdoor');
   if (tab === 'screener') renderScreener();
   else if (tab === 'signal') renderSignals();
+  else if (tab === 'backdoor') renderBackdoor();
   else if (tab === 'holders') { if (currentStock) renderHolders(); else document.getElementById('mainContent').innerHTML = `<div class="empty-state"><div class="empty-icon">👥</div><div class="empty-text">Pilih saham dulu untuk lihat pemegang utama</div></div>`; }
   else if (currentStock) renderMain();
-  else if (tab !== 'screener') {
+  else if (tab !== 'screener' && tab !== 'backdoor') {
     document.getElementById('mainContent').innerHTML = `<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text">Select a stock to begin</div></div>`;
   }
 }
@@ -1486,6 +1490,7 @@ function goStock(code) {
   document.getElementById('tabHolders').classList.remove('active');
   document.getElementById('tabScreener').classList.remove('active');
   document.getElementById('tabSignal').classList.remove('active');
+  document.getElementById('tabBackdoor').classList.remove('active');
   selectStock(code);
   // scroll sidebar to stock
   setTimeout(() => {
@@ -1497,6 +1502,175 @@ function goStock(code) {
       }
     }
   }, 100);
+}
+
+// ============ BACKDOOR LISTING RADAR ============
+// Metodologi (divalidasi manual pada SINI/MORA/UNSP - lihat changelog v1.7.0):
+//   +2  entitas baru >1% (Corporate/PE/Individual/dst, non-institusi keuangan biasa) dgn stake awal >=3%
+//   +1  entitas baru >1% dgn stake awal <3%
+//   +1  pemegang lama turun >=3pp secara konsisten (>=3 titik data, monoton turun di 2 transisi terakhir)
+//   +2  saham beredar (sec) naik >20% MoM dalam 6 bulan terakhir (rights issue / PP besar)
+//   +1  ada kategori kepemilikan (dari 18 kategori) berubah >1pp dari total saham dalam 1 bulan
+//   +1  market cap di bawah persentil-20 universe DAN salah satu dari sinyal utama (entitas besar/sec jump) muncul
+// PENTING: skor tinggi = kandidat untuk divalidasi manual lewat berita/keterbukaan informasi IDX,
+// bukan kepastian backdoor listing. Bisa juga menangkap pola lain (mis. debt-to-equity restructuring - lihat kasus UNSP).
+const BACKDOOR_ACQUIRER_TYPES = new Set([
+  'Corporate','Private Equity','Individual','Hedge Fund','Venture Capital',
+  'Investment Manager','Sole Proprietorship','Sole proprietorship','Firm','Partnership',
+  'Commanditaire Vennootschap (CV) Or Limited Partnership','Commanditaire Vennootschap (CV) or Limited partnership','-'
+]);
+let backdoorMinScore = 5;
+let backdoorCache = null;
+
+function backdoorGetLast6(code) {
+  const rows = RAW[code];
+  if (!rows) return null;
+  const byDate = {};
+  rows.forEach(r => { byDate[r.date] = r; });
+  const out = HOLDERS_MONTHS.map(m => byDate[m] || null);
+  return out.every(x => x) ? out : null;
+}
+
+function computeBackdoorScores() {
+  if (backdoorCache) return backdoorCache;
+  const results = [];
+
+  Object.keys(HOLDERS).forEach(code => {
+    const holders = HOLDERS[code];
+    let score = 0;
+    const reasons = [];
+    const newMajor = [], newMinor = [], declining = [];
+
+    holders.forEach(h => {
+      const name = h[0], htype = h[1], loc = h[2], vals = h[3];
+      const nn = [];
+      vals.forEach((v, i) => { if (v !== null && v !== undefined) nn.push(i); });
+      if (!nn.length) return;
+      const firstIdx = nn[0];
+      if (firstIdx > 0 && BACKDOOR_ACQUIRER_TYPES.has(htype)) {
+        const entry = { name, htype, loc, month: HOLDERS_MONTHS[firstIdx], val: vals[firstIdx] };
+        if (vals[firstIdx] >= 3) newMajor.push(entry); else newMinor.push(entry);
+      }
+      if (nn.length >= 3) {
+        const seq = nn.map(i => vals[i]);
+        const last = seq.length - 1;
+        const drop = seq[0] - seq[last];
+        if (drop >= 3 && seq[last] <= seq[last - 1] + 1e-9 && seq[last - 1] <= seq[last - 2] + 1e-9) {
+          declining.push({ name, from: seq[0], to: seq[last] });
+        }
+      }
+    });
+
+    if (newMajor.length) {
+      score += 2;
+      reasons.push('Entitas baru signifikan (\u2265' + '3%): ' + newMajor.map(e => `${e.name} (${e.htype}, ${e.loc}) masuk ${e.month} @${e.val}%`).join('; '));
+    } else if (newMinor.length) {
+      score += 1;
+      reasons.push('Entitas baru kecil (<3%): ' + newMinor.map(e => `${e.name} (${e.htype}, ${e.loc}) masuk ${e.month} @${e.val}%`).join('; '));
+    }
+    if (declining.length) {
+      score += 1;
+      reasons.push('Pemegang lama turun konsisten \u2265' + '3pp: ' + declining.map(d => `${d.name} ${d.from}%\u2192${d.to}%`).join('; '));
+    }
+
+    const last6 = backdoorGetLast6(code);
+    let secJump = null;
+    if (last6) {
+      const secs = last6.map(x => x.sec);
+      for (let i = 1; i < secs.length; i++) {
+        if (secs[i - 1] > 0 && secs[i] / secs[i - 1] > 1.20) {
+          secJump = { month: HOLDERS_MONTHS[i], from: secs[i - 1], to: secs[i], pct: secs[i] / secs[i - 1] - 1 };
+        }
+      }
+      if (secJump) {
+        score += 2;
+        reasons.push(`Saham beredar naik ${(secJump.pct * 100).toFixed(0)}% di ${secJump.month} (${secJump.from.toLocaleString()} \u2192 ${secJump.to.toLocaleString()})`);
+      }
+    }
+
+    let catJump = null;
+    if (last6) {
+      const shares = last6.map(x => x.cats.map(c => x.sec ? c / x.sec : 0));
+      let best = { d: 0, ci: null, mi: null };
+      for (let i = 1; i < shares.length; i++) {
+        for (let ci = 0; ci < CATS.length; ci++) {
+          const d = Math.abs(shares[i][ci] - shares[i - 1][ci]);
+          if (d > best.d) best = { d, ci, mi: i };
+        }
+      }
+      if (best.d > 0.01) {
+        catJump = best;
+        score += 1;
+        reasons.push(`Kategori ${CATS[best.ci]} berubah ${(best.d * 100).toFixed(1)}pp di ${HOLDERS_MONTHS[best.mi]}`);
+      }
+    }
+
+    const marketcap = last6 ? last6[last6.length - 1].price * last6[last6.length - 1].sec : null;
+    results.push({ code, score, reasons, marketcap, hasMajor: newMajor.length > 0, hasSecJump: !!secJump });
+  });
+
+  const caps = results.filter(r => r.marketcap).map(r => r.marketcap).sort((a, b) => a - b);
+  const q20 = caps.length ? caps[Math.floor(caps.length * 0.20)] : 0;
+  results.forEach(r => {
+    if (r.marketcap && r.marketcap > 0 && r.marketcap < q20 && (r.hasMajor || r.hasSecJump)) {
+      r.score += 1;
+      r.reasons.push(`Market cap kecil (persentil-20 universe, Rp${(r.marketcap / 1e9).toFixed(0)}M)`);
+    }
+  });
+
+  results.sort((a, b) => b.score - a.score);
+  backdoorCache = results;
+  return results;
+}
+
+function renderBackdoor() {
+  destroyCharts();
+  const el = document.getElementById('mainContent');
+  const results = computeBackdoorScores();
+  const filtered = results.filter(r => r.score >= backdoorMinScore);
+
+  let html = `<div class="screener-controls">
+    <div class="sc-field">
+      <div class="sc-label">Skor Minimum</div>
+      <input class="n-input" type="number" min="1" max="10" value="${backdoorMinScore}" onchange="backdoorMinScore=Math.max(1,Math.min(10,+this.value)); renderBackdoor()">
+    </div>
+  </div>
+  <div style="margin-bottom:16px;font-size:11px;color:var(--muted);line-height:1.6;">
+    Screening otomatis atas ${Object.keys(HOLDERS).length} saham dengan data Pemegang &gt;1% (${HOLDERS_MONTHS[0]} \u2013 ${HOLDERS_MONTHS[HOLDERS_MONTHS.length - 1]}).
+    Kandidat skor \u2265${backdoorMinScore}: <span style="color:var(--accent);font-weight:800;">${filtered.length}</span>
+    &middot; Klik baris untuk lihat breakdown skor. <strong>Skor tinggi \u2260 pasti backdoor listing</strong> \u2014 selalu validasi manual lewat berita/keterbukaan informasi IDX (lihat catatan metodologi di changelog v1.7.0).
+  </div>`;
+
+  if (!filtered.length) {
+    html += `<div class="empty-state"><div class="empty-icon">\ud83d\udeaa</div><div class="empty-text">Tidak ada kandidat pada skor minimum ini \u2014 coba turunkan angkanya</div></div>`;
+  } else {
+    html += `<div class="sc-table-wrap"><table class="sc-table" id="backdoorTable">
+      <thead><tr><th>#</th><th>Kode</th><th>Skor</th><th>Market Cap</th><th>Sinyal Utama</th></tr></thead>
+      <tbody>${filtered.map((r, i) => `
+        <tr onclick="toggleBackdoorDetail('${r.code}')">
+          <td><span class="rank-num">${i + 1}</span></td>
+          <td><span class="sc-code-link">${r.code}</span></td>
+          <td><span class="${r.score >= 6 ? 'val-pos' : ''}" style="font-weight:800;">${r.score}</span></td>
+          <td>${r.marketcap ? 'Rp ' + (r.marketcap / 1e12).toFixed(2) + 'T' : '\u2014'}</td>
+          <td style="text-align:left;font-size:11px;color:var(--muted);">${(r.reasons[0] || '').slice(0, 90)}${(r.reasons[0] || '').length > 90 ? '\u2026' : ''}</td>
+        </tr>
+        <tr id="backdoorDetail-${r.code}" style="display:none;">
+          <td colspan="5" style="background:var(--surface2);padding:16px;text-align:left;">
+            <div style="font-size:11px;line-height:1.9;color:var(--text);">${r.reasons.map(rs => '\u2022 ' + rs).join('<br>')}</div>
+            <button class="cat-toggle on" style="margin-top:10px;" onclick="event.stopPropagation(); goStock('${r.code}')">Lihat detail saham \u2192</button>
+          </td>
+        </tr>
+      `).join('')}</tbody>
+    </table></div>`;
+  }
+
+  el.innerHTML = html;
+}
+
+function toggleBackdoorDetail(code) {
+  const row = document.getElementById('backdoorDetail-' + code);
+  if (!row) return;
+  row.style.display = row.style.display === 'none' ? 'table-row' : 'none';
 }
 
 // ============ SINYAL: IB Senyap & SC Akumulasi (formula tervalidasi riset 36-bulan) ============
@@ -1564,21 +1738,19 @@ function computeIBSCSignals() {
 // ============ RIWAYAT VALIDASI SINYAL (localStorage, auto-track tiap bulan) ============
 const SIGNAL_HISTORY_KEY = 'idx_tracker_signal_history_v1';
 const SEED_HISTORY = {
-"2026-05":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"AKRA","price":1235,"cum":0.2699},{"code":"AMRT","price":1150,"cum":0.4431},{"code":"FORE","price":705,"cum":0.5611},{"code":"GGRM","price":17000,"cum":0.2573},{"code":"INDY","price":2280,"cum":1.22},{"code":"INTP","price":4900,"cum":0.3592},{"code":"KBLI","price":322,"cum":0.2756},{"code":"MAIN","price":830,"cum":0.5787},{"code":"MAPI","price":1495,"cum":0.6898},{"code":"SSIA","price":1675,"cum":0.9279},{"code":"TAPG","price":1520,"cum":0.7355},{"code":"TLKM","price":3030,"cum":0.5741}],"sc":[{"code":"ASRI","price":116,"accum":3.46},{"code":"DSSA","price":492,"accum":4.46},{"code":"MMIX","price":422,"accum":5.88},{"code":"NSSS","price":462,"accum":19.07},{"code":"PACK","price":308,"accum":2.5}]},"2026-06":{"savedAt":"2026-09-02T00:00:00.000Z","ib":[{"code":"BBCA","price":5550,"cum":0.4084},{"code":"BIRD","price":1485,"cum":0.6485},{"code":"CTRA","price":555,"cum":0.5484},{"code":"CUAN","price":530,"cum":0.9423},{"code":"DOID","price":200,"cum":0.3488},{"code":"GGRM","price":16250,"cum":0.2573},{"code":"GOTO","price":50,"cum":0.5152},{"code":"INET","price":181,"cum":0.3427},{"code":"INTP","price":4160,"cum":0.3592},{"code":"IRSX","price":264,"cum":0.2686},{"code":"KBLI","price":324,"cum":0.2756},{"code":"MEDC","price":1025,"cum":0.3023},{"code":"MIDI","price":258,"cum":0.3449},{"code":"MTDL","price":505,"cum":0.3919},{"code":"NCKL","price":780,"cum":0.3693},{"code":"PNLF","price":216,"cum":0.3143},{"code":"PWON","price":240,"cum":0.7842},{"code":"SSMS","price":725,"cum":0.6515},{"code":"TKIM","price":5400,"cum":0.9434}],"sc":[{"code":"BRMS","price":474,"accum":4.94},{"code":"DEWA","price":284,"accum":2.87},{"code":"DSSA","price":795,"accum":4.61},{"code":"MMIX","price":545,"accum":4.72},{"code":"NSSS","price":580,"accum":36.85},{"code":"PACK","price":226,"accum":2.49},{"code":"SMRA","price":272,"accum":3.15}]},
   "2026-07": {
     savedAt: "2026-09-02T00:00:00.000Z",
     ib: [
-      {code:"CUAN",price:665,cum:0.7506},{code:"ISAT",price:1900,cum:0.4148},{code:"GOTO",price:50,cum:0.769},{code:"PGAS",price:1500,cum:0.7169},
-      {code:"PNBN",price:895,cum:0.2492},{code:"AVIA",price:324,cum:0.6356},{code:"BBTN",price:1215,cum:0.4641},{code:"SSMS",price:1000,cum:0.7239},
-      {code:"RMKE",price:418,cum:0.4631},{code:"HRTA",price:1855,cum:0.4532},{code:"DOOH",price:248,cum:0.4192},{code:"UCID",price:414,cum:0.2803},
-      {code:"KETR",price:555,cum:0.7603},{code:"JGLE",price:64,cum:0.308},{code:"KBLI",price:324,cum:0.2606}
+      {code:"CUAN",price:665},{code:"ISAT",price:1900},{code:"GOTO",price:50},{code:"PGAS",price:1500},
+      {code:"PNBN",price:895},{code:"AVIA",price:324},{code:"BBTN",price:1215},{code:"SSMS",price:1000},
+      {code:"RMKE",price:418},{code:"HRTA",price:1855},{code:"DOOH",price:248},{code:"UCID",price:414},
+      {code:"KETR",price:555},{code:"JGLE",price:64},{code:"KBLI",price:324}
     ],
     sc: [
       {code:"HYGN",price:171,accum:5.56},{code:"MMIX",price:735,accum:4.71},
       {code:"RMKE",price:418,accum:3.58},{code:"DEWA",price:460,accum:2.36}
     ]
   }
-
 };
 
 function loadSignalHistory() {
@@ -1600,7 +1772,7 @@ function saveSignalSnapshot(month, ib, sc) {
     if (hist[month]) return; // sudah pernah disimpan bulan ini, jangan timpa
     hist[month] = {
       savedAt: new Date().toISOString(),
-      ib: ib.map(r => ({ code: r.code, price: r.price, cum: r.cum })),
+      ib: ib.map(r => ({ code: r.code, price: r.price })),
       sc: sc.map(r => ({ code: r.code, price: r.price, accum: r.accum }))
     };
     localStorage.setItem(SIGNAL_HISTORY_KEY, JSON.stringify(hist));
@@ -1648,19 +1820,19 @@ function buildSignalHistoryReport() {
     const hasRealization = Object.keys(RAW).some(c => getPriceAt(c, nm) !== null);
     if (!hasRealization) return; // bulan berikutnya belum ada datanya
 
-    const calcPortfolio = (list, magKey) => {
+    const calcPortfolio = (list) => {
       const rows = list.map(r => {
         const pNow = getPriceAt(r.code, nm);
         const ret = (pNow && r.price) ? (pNow/r.price - 1) * 100 : null;
-        return { code: r.code, entry: r.price, now: pNow, ret, mag: r[magKey] };
+        return { code: r.code, entry: r.price, now: pNow, ret };
       });
       const validRets = rows.filter(x => x.ret !== null).map(x => x.ret);
       const avg = validRets.length ? validRets.reduce((a,b)=>a+b,0)/validRets.length : null;
       return { rows, avg };
     };
 
-    const ibResult = calcPortfolio(entry.ib, 'cum');
-    const scResult = calcPortfolio(entry.sc, 'accum');
+    const ibResult = calcPortfolio(entry.ib);
+    const scResult = calcPortfolio(entry.sc);
     const bench = computeMarketBenchmark(m, nm);
     report.push({ month: m, nextMonth: nm, ib: ibResult, sc: scResult, bench });
   });
@@ -1769,18 +1941,6 @@ function renderSignals() {
       <p style="font-size:12px;color:var(--muted);margin-bottom:16px;line-height:1.6;">
         Setiap kali tab ini dibuka dengan data bulan baru, sistem otomatis menyimpan daftar rekomendasi saat itu. Begitu bulan berikutnya tersedia, realisasinya dihitung otomatis di sini — supaya bisa dipantau track record-nya dari waktu ke waktu, apa adanya (tidak diedit/dihapus).
       </p>
-
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:16px; margin-bottom:20px;">
-        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;">
-          <div style="font-size:11px; font-weight:700; color:var(--muted); margin-bottom:8px;">📊 SC: % Akumulasi vs Return Realisasi</div>
-          <canvas id="scatterSC" height="180"></canvas>
-        </div>
-        <div style="background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px;">
-          <div style="font-size:11px; font-weight:700; color:var(--muted); margin-bottom:8px;">🐋 IB: % Magnitude vs Return Realisasi</div>
-          <canvas id="scatterIB" height="180"></canvas>
-        </div>
-      </div>
-
       ${historyReport.map(r => `
         <div style="margin-bottom:20px; padding:16px; background:var(--surface2); border-radius:12px;">
           <div style="font-weight:800; font-size:13px; margin-bottom:10px; font-family:'Syne',sans-serif;">
@@ -1814,43 +1974,6 @@ function renderSignals() {
     </div>
     `}
   `;
-
-  // Scatter chart: pool semua data historis (SC & IB) untuk lihat pola magnitude vs return
-  if (historyReport.length > 0) {
-    const scPoints = [];
-    const ibPoints = [];
-    historyReport.forEach(r => {
-      r.sc.rows.forEach(x => { if (x.ret !== null && x.mag != null) scPoints.push({ x: x.mag, y: x.ret, label: x.code }); });
-      r.ib.rows.forEach(x => { if (x.ret !== null && x.mag != null) ibPoints.push({ x: x.mag, y: x.ret, label: x.code }); });
-    });
-
-    const scatterOptions = (xLabel) => ({
-      responsive: true, maintainAspectRatio: true,
-      plugins: {
-        legend: { display: false },
-        tooltip: { callbacks: { label: ctx => `${ctx.raw.label}: ${xLabel}=${ctx.raw.x.toFixed(2)}%, Return=${ctx.raw.y.toFixed(1)}%` } }
-      },
-      scales: {
-        x: { title: { display: true, text: xLabel + ' (%)', color: '#5F7A6A', font: { size: 10 } }, grid: { color: '#E3F3E8' }, ticks: { color: '#5F7A6A', font: { size: 10 } } },
-        y: { title: { display: true, text: 'Return Realisasi (%)', color: '#5F7A6A', font: { size: 10 } }, grid: { color: '#E3F3E8' }, ticks: { color: '#5F7A6A', font: { size: 10 } } }
-      }
-    });
-
-    if (scPoints.length > 0) {
-      charts.scatterSC = new Chart(document.getElementById('scatterSC'), {
-        type: 'scatter',
-        data: { datasets: [{ data: scPoints, backgroundColor: 'rgba(139,92,246,0.7)', pointRadius: 5, pointHoverRadius: 7 }] },
-        options: scatterOptions('Akumulasi SC')
-      });
-    }
-    if (ibPoints.length > 0) {
-      charts.scatterIB = new Chart(document.getElementById('scatterIB'), {
-        type: 'scatter',
-        data: { datasets: [{ data: ibPoints, backgroundColor: 'rgba(245,165,36,0.7)', pointRadius: 5, pointHoverRadius: 7 }] },
-        options: scatterOptions('Magnitude IB')
-      });
-    }
-  }
 }
 
 // ============ PEMEGANG UTAMA (>1%) — data KSEI bulanan Mar-Agu 2026 ============
